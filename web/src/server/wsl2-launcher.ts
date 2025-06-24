@@ -39,9 +39,9 @@ class WSL2Launcher {
     this.pidFile = path.join(configDir, 'server.pid');
     this.logFile = path.join(configDir, 'server.log');
 
-    // Ensure config directory exists
+    // Ensure config directory exists with proper permissions
     if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
     }
   }
 
@@ -57,15 +57,36 @@ class WSL2Launcher {
 
       switch (arg) {
         case '--port':
-          config.port = parseInt(args[++i], 10);
+          if (i + 1 >= args.length) {
+            logger.error('--port requires a value');
+            process.exit(1);
+          }
+          const port = parseInt(args[++i], 10);
+          if (isNaN(port) || port < 1 || port > 65535) {
+            logger.error('Port must be a number between 1 and 65535');
+            process.exit(1);
+          }
+          config.port = port;
           break;
         case '--bind':
+          if (i + 1 >= args.length) {
+            logger.error('--bind requires a value');
+            process.exit(1);
+          }
           config.bind = args[++i];
           break;
         case '--username':
+          if (i + 1 >= args.length) {
+            logger.error('--username requires a value');
+            process.exit(1);
+          }
           config.username = args[++i];
           break;
         case '--password':
+          if (i + 1 >= args.length) {
+            logger.error('--password requires a value');
+            process.exit(1);
+          }
           config.password = args[++i];
           break;
         case '--no-auth':
@@ -93,6 +114,17 @@ class WSL2Launcher {
             process.exit(1);
           }
       }
+    }
+
+    // Validate configuration
+    if (config.username && !config.password) {
+      logger.error('Username specified but no password provided. Use --password or --no-auth');
+      process.exit(1);
+    }
+
+    if (config.password && !config.username) {
+      logger.error('Password specified but no username provided. Use --username');
+      process.exit(1);
     }
 
     return config;
@@ -185,7 +217,7 @@ ${chalk.yellow('WSL2 Access:')}
   /**
    * Stop the server
    */
-  private stopServer(): void {
+  private async stopServer(): Promise<void> {
     const status = this.isServerRunning();
 
     if (!status.running) {
@@ -197,27 +229,48 @@ ${chalk.yellow('WSL2 Access:')}
       console.log(chalk.yellow(`Stopping server (PID: ${status.pid})...`));
       if (status.pid) {
         process.kill(status.pid, 'SIGTERM');
+
+        // Wait for graceful shutdown with timeout
+        const gracefulShutdown = await this.waitForProcessExit(status.pid, 5000);
+
+        if (!gracefulShutdown) {
+          console.log(chalk.red('Server did not stop gracefully, forcing termination...'));
+          try {
+            process.kill(status.pid, 'SIGKILL');
+            await this.waitForProcessExit(status.pid, 2000);
+          } catch (killError) {
+            logger.warn('Error during force kill:', killError);
+          }
+        }
       }
 
-      // Wait a bit for graceful shutdown
-      setTimeout(() => {
-        const stillRunning = this.isServerRunning();
-        if (stillRunning.running && status.pid) {
-          console.log(chalk.red('Server did not stop gracefully, forcing termination...'));
-          process.kill(status.pid, 'SIGKILL');
-        }
+      // Clean up PID file
+      if (fs.existsSync(this.pidFile)) {
+        fs.unlinkSync(this.pidFile);
+      }
 
-        // Clean up PID file
-        if (fs.existsSync(this.pidFile)) {
-          fs.unlinkSync(this.pidFile);
-        }
-
-        console.log(chalk.green('✓ Server stopped'));
-      }, 3000);
+      console.log(chalk.green('✓ Server stopped'));
     } catch (error) {
       logger.error('Error stopping server:', error);
       process.exit(1);
     }
+  }
+
+  /**
+   * Wait for a process to exit with timeout
+   */
+  private async waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+    const startTime = Date.now();
+    const checkInterval = 100; // Check every 100ms
+
+    while (Date.now() - startTime < timeoutMs) {
+      if (!ProcessUtils.isProcessRunning(pid)) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, checkInterval));
+    }
+
+    return false;
   }
 
   /**
@@ -240,7 +293,7 @@ ${chalk.yellow('WSL2 Access:')}
     }
 
     // Build server command
-    const serverPath = path.resolve(__dirname, 'server.js');
+    const serverPath = path.resolve(__dirname, '..', 'cli.js');
     const args: string[] = [];
 
     if (config.port) args.push('--port', config.port.toString());
@@ -253,18 +306,18 @@ ${chalk.yellow('WSL2 Access:')}
 
     if (config.background) {
       // Start in background
-      const serverProcess = spawn('node', [serverPath, ...args], {
+      const serverProcess = spawn('npx', ['tsx', serverPath, ...args], {
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      // Write PID file
+      // Write PID file with secure permissions
       if (serverProcess.pid) {
-        fs.writeFileSync(this.pidFile, serverProcess.pid.toString());
+        fs.writeFileSync(this.pidFile, serverProcess.pid.toString(), { mode: 0o600 });
       }
 
-      // Set up log file
-      const logStream = fs.createWriteStream(this.logFile, { flags: 'a' });
+      // Set up log file with secure permissions
+      const logStream = fs.createWriteStream(this.logFile, { flags: 'a', mode: 0o600 });
       serverProcess.stdout?.pipe(logStream);
       serverProcess.stderr?.pipe(logStream);
 
@@ -276,13 +329,13 @@ ${chalk.yellow('WSL2 Access:')}
       console.log(chalk.cyan('  Access: http://localhost:4020'));
     } else {
       // Start in foreground
-      const serverProcess = spawn('node', [serverPath, ...args], {
+      const serverProcess = spawn('npx', ['tsx', serverPath, ...args], {
         stdio: 'inherit',
       });
 
-      // Write PID file
+      // Write PID file with secure permissions
       if (serverProcess.pid) {
-        fs.writeFileSync(this.pidFile, serverProcess.pid.toString());
+        fs.writeFileSync(this.pidFile, serverProcess.pid.toString(), { mode: 0o600 });
       }
 
       // Clean up on exit
@@ -307,7 +360,7 @@ ${chalk.yellow('WSL2 Access:')}
   /**
    * Main entry point
    */
-  public run(): void {
+  public async run(): Promise<void> {
     const config = this.parseArgs();
 
     if (config.status) {
@@ -316,7 +369,7 @@ ${chalk.yellow('WSL2 Access:')}
     }
 
     if (config.stopSignal) {
-      this.stopServer();
+      await this.stopServer();
       return;
     }
 

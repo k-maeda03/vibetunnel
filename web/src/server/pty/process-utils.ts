@@ -20,8 +20,9 @@ export class ProcessUtils {
    * Detect if running in WSL2 environment
    *
    * Detection strategy:
-   * 1. Primary: Check /proc/version for "microsoft" AND "WSL2" (most reliable)
-   * 2. Fallback: WSL environment variables indicate WSL1 (not supported)
+   * 1. Primary: Check /proc/version for "microsoft" AND kernel version patterns
+   * 2. Secondary: Check /proc/sys/kernel/osrelease for WSL2 signatures
+   * 3. Fallback: WSL environment variables with additional validation
    *
    * Note: WSL1 and WSL2 share the same environment variables but have different
    * kernel signatures. Only WSL2 is supported due to its Linux-compatible networking.
@@ -38,39 +39,64 @@ export class ProcessUtils {
         return false;
       }
 
-      // Check /proc/version for WSL2 signatures
+      // Method 1: Check /proc/version for WSL2 signatures
       if (fs.existsSync('/proc/version')) {
         const versionContent = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
-        const isWSL = versionContent.includes('microsoft') || versionContent.includes('wsl');
-        const isWSL2 = versionContent.includes('wsl2');
+        const isMicrosoft = versionContent.includes('microsoft');
 
-        if (isWSL && isWSL2) {
-          ProcessUtils._isWSL2 = true;
-          logger.log(chalk.green('WSL2 environment detected'));
-          return true;
-        } else if (isWSL && !isWSL2) {
-          // This is WSL1
-          ProcessUtils._isWSL2 = false;
-          logger.warn(chalk.red('WSL1 detected - WSL1 is not supported. Please upgrade to WSL2.'));
-          logger.warn(chalk.yellow('Run "wsl --set-version <distro> 2" to upgrade to WSL2'));
-          return false;
+        if (isMicrosoft) {
+          // Look for WSL2-specific patterns
+          const isWSL2 = versionContent.includes('wsl2') ||
+            versionContent.includes('#1-microsoft') ||
+            /microsoft.*-wsl2/.test(versionContent);
+
+          if (isWSL2) {
+            ProcessUtils._isWSL2 = true;
+            logger.log(chalk.green('WSL2 environment detected via /proc/version'));
+            return true;
+          } else {
+            // This is likely WSL1
+            ProcessUtils._isWSL2 = false;
+            logger.warn(chalk.red('WSL1 detected - WSL1 is not supported. Please upgrade to WSL2.'));
+            logger.warn(chalk.yellow('Run "wsl --set-version <distro> 2" to upgrade to WSL2'));
+            return false;
+          }
         }
-
-        // Not WSL, continue to environment variable check
       }
 
-      // Check for WSL environment variables as fallback, but be more careful
+      // Method 2: Check /proc/sys/kernel/osrelease for additional WSL2 patterns
+      if (fs.existsSync('/proc/sys/kernel/osrelease')) {
+        const osRelease = fs.readFileSync('/proc/sys/kernel/osrelease', 'utf8').toLowerCase().trim();
+        if (osRelease.includes('microsoft') && (osRelease.includes('wsl2') || osRelease.includes('-wsl2'))) {
+          ProcessUtils._isWSL2 = true;
+          logger.log(chalk.green('WSL2 environment detected via /proc/sys/kernel/osrelease'));
+          return true;
+        }
+      }
+
+      // Method 3: Check for WSL environment variables with additional validation
       const wslEnvVars = ['WSL_DISTRO_NAME', 'WSL_INTEROP', 'WSLENV'];
       const hasWSLEnv = wslEnvVars.some((envVar) => process.env[envVar]);
 
       if (hasWSLEnv) {
-        // WSL environment detected, but we need to determine if it's WSL1 or WSL2
-        // WSL2 should have been detected via /proc/version above
-        // If we reach here with WSL env vars but no WSL2 in /proc/version, it's likely WSL1
-        logger.log(chalk.yellow('WSL environment detected via environment variables'));
-        logger.warn(chalk.red('Unable to confirm WSL2 - this may be WSL1 which is not supported'));
-        ProcessUtils._isWSL2 = false;
-        return false;
+        // Additional check: WSL2 typically has systemd support or different init system
+        // Check if we can find WSL2-specific filesystem patterns
+        const wsl2Indicators = [
+          fs.existsSync('/run/WSL'), // WSL2-specific runtime directory
+          fs.existsSync('/mnt/wsl'), // WSL2 mount point
+          process.env.WSL_INTEROP?.includes('wsl2') // WSL2 in interop path
+        ];
+
+        if (wsl2Indicators.some(indicator => indicator)) {
+          ProcessUtils._isWSL2 = true;
+          logger.log(chalk.green('WSL2 environment detected via environment variables and filesystem indicators'));
+          return true;
+        } else {
+          logger.log(chalk.yellow('WSL environment detected but cannot confirm WSL2'));
+          logger.warn(chalk.red('This may be WSL1 which is not supported'));
+          ProcessUtils._isWSL2 = false;
+          return false;
+        }
       }
 
       ProcessUtils._isWSL2 = false;
