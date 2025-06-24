@@ -56,7 +56,7 @@ class WSL2Launcher {
       const arg = args[i];
 
       switch (arg) {
-        case '--port':
+        case '--port': {
           if (i + 1 >= args.length) {
             logger.error('--port requires a value');
             process.exit(1);
@@ -68,6 +68,7 @@ class WSL2Launcher {
           }
           config.port = port;
           break;
+        }
         case '--bind':
           if (i + 1 >= args.length) {
             logger.error('--bind requires a value');
@@ -267,7 +268,7 @@ ${chalk.yellow('WSL2 Access:')}
       if (!ProcessUtils.isProcessRunning(pid)) {
         return true;
       }
-      await new Promise(resolve => setTimeout(resolve, checkInterval));
+      await new Promise((resolve) => setTimeout(resolve, checkInterval));
     }
 
     return false;

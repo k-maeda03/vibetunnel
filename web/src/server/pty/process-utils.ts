@@ -46,7 +46,8 @@ export class ProcessUtils {
 
         if (isMicrosoft) {
           // Look for WSL2-specific patterns
-          const isWSL2 = versionContent.includes('wsl2') ||
+          const isWSL2 =
+            versionContent.includes('wsl2') ||
             versionContent.includes('#1-microsoft') ||
             /microsoft.*-wsl2/.test(versionContent);
 
@@ -57,7 +58,9 @@ export class ProcessUtils {
           } else {
             // This is likely WSL1
             ProcessUtils._isWSL2 = false;
-            logger.warn(chalk.red('WSL1 detected - WSL1 is not supported. Please upgrade to WSL2.'));
+            logger.warn(
+              chalk.red('WSL1 detected - WSL1 is not supported. Please upgrade to WSL2.')
+            );
             logger.warn(chalk.yellow('Run "wsl --set-version <distro> 2" to upgrade to WSL2'));
             return false;
           }
@@ -66,8 +69,14 @@ export class ProcessUtils {
 
       // Method 2: Check /proc/sys/kernel/osrelease for additional WSL2 patterns
       if (fs.existsSync('/proc/sys/kernel/osrelease')) {
-        const osRelease = fs.readFileSync('/proc/sys/kernel/osrelease', 'utf8').toLowerCase().trim();
-        if (osRelease.includes('microsoft') && (osRelease.includes('wsl2') || osRelease.includes('-wsl2'))) {
+        const osRelease = fs
+          .readFileSync('/proc/sys/kernel/osrelease', 'utf8')
+          .toLowerCase()
+          .trim();
+        if (
+          osRelease.includes('microsoft') &&
+          (osRelease.includes('wsl2') || osRelease.includes('-wsl2'))
+        ) {
           ProcessUtils._isWSL2 = true;
           logger.log(chalk.green('WSL2 environment detected via /proc/sys/kernel/osrelease'));
           return true;
@@ -84,12 +93,16 @@ export class ProcessUtils {
         const wsl2Indicators = [
           fs.existsSync('/run/WSL'), // WSL2-specific runtime directory
           fs.existsSync('/mnt/wsl'), // WSL2 mount point
-          process.env.WSL_INTEROP?.includes('wsl2') // WSL2 in interop path
+          process.env.WSL_INTEROP?.includes('wsl2'), // WSL2 in interop path
         ];
 
-        if (wsl2Indicators.some(indicator => indicator)) {
+        if (wsl2Indicators.some((indicator) => indicator)) {
           ProcessUtils._isWSL2 = true;
-          logger.log(chalk.green('WSL2 environment detected via environment variables and filesystem indicators'));
+          logger.log(
+            chalk.green(
+              'WSL2 environment detected via environment variables and filesystem indicators'
+            )
+          );
           return true;
         } else {
           logger.log(chalk.yellow('WSL environment detected but cannot confirm WSL2'));
