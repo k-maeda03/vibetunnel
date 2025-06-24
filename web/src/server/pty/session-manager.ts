@@ -69,8 +69,9 @@ export class SessionManager {
    */
   private createStdinPipe(stdinPath: string): void {
     try {
-      // Try to create FIFO pipe (Unix-like systems)
-      if (process.platform !== 'win32') {
+      // Try to create FIFO pipe (Unix-like systems including WSL2)
+      const platformType = ProcessUtils.getPlatformType();
+      if (platformType !== 'win32') {
         const result = spawnSync('mkfifo', [stdinPath], { stdio: 'ignore' });
         if (result.status === 0) {
           logger.debug(`FIFO pipe created: ${stdinPath}`);

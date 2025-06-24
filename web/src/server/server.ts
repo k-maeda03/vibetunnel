@@ -27,6 +27,7 @@ import { ActivityMonitor } from './services/activity-monitor.js';
 import { v4 as uuidv4 } from 'uuid';
 import { getVersionInfo, printVersionBanner } from './version.js';
 import { createLogger, initLogger, closeLogger, setDebugMode } from './utils/logger.js';
+import { ProcessUtils } from './pty/process-utils.js';
 
 const logger = createLogger('server');
 
@@ -107,6 +108,11 @@ Environment Variables:
   VIBETUNNEL_PASSWORD   Default password if --password not specified
   VIBETUNNEL_CONTROL_DIR Control directory for session data
   PUSH_CONTACT_EMAIL    Contact email for VAPID configuration
+
+WSL2 Support:
+  VibeTunnel automatically detects WSL2 environments and configures
+  network binding for Windows host access. Access from Windows browser:
+  http://localhost:4020 (default port)
 
 Examples:
   # Run a simple server with authentication
@@ -589,7 +595,20 @@ export async function createApp(): Promise<AppInstance> {
       }
     });
 
-    const bindAddress = config.bind || '0.0.0.0';
+    // Determine appropriate bind address for the platform
+    let bindAddress = config.bind;
+    if (!bindAddress) {
+      const platformType = ProcessUtils.getPlatformType();
+      if (platformType === 'wsl2') {
+        // WSL2: Bind to all interfaces to allow Windows host access
+        bindAddress = '0.0.0.0';
+        logger.debug('WSL2 detected: binding to 0.0.0.0 for Windows host access');
+      } else {
+        // Default for other platforms
+        bindAddress = '0.0.0.0';
+      }
+    }
+
     server.listen(requestedPort, bindAddress, () => {
       const address = server.address();
       const actualPort =
@@ -598,6 +617,14 @@ export async function createApp(): Promise<AppInstance> {
       logger.log(
         chalk.green(`VibeTunnel Server running on http://${displayAddress}:${actualPort}`)
       );
+
+      // Show WSL2-specific access information
+      const platformType = ProcessUtils.getPlatformType();
+      if (platformType === 'wsl2') {
+        logger.log(chalk.cyan('WSL2 detected! Access from Windows browser:'));
+        logger.log(chalk.cyan(`  → http://localhost:${actualPort}`));
+        logger.log(chalk.gray('Network interface bound to all addresses for WSL2 compatibility'));
+      }
 
       if (config.noAuth) {
         logger.warn(chalk.yellow('Authentication: DISABLED (--no-auth)'));

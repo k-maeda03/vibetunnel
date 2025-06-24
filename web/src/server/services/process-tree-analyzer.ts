@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createLogger } from '../utils/logger.js';
+import { ProcessUtils } from '../pty/process-utils.js';
 
 const logger = createLogger('process-tree-analyzer');
 
@@ -31,7 +32,8 @@ export class ProcessTreeAnalyzer {
    */
   async getProcessTree(rootPid: number): Promise<ProcessInfo[]> {
     try {
-      if (process.platform === 'win32') {
+      const platformType = ProcessUtils.getPlatformType();
+      if (platformType === 'win32') {
         return await this.getWindowsProcessTree(rootPid);
       } else {
         return await this.getUnixProcessTree(rootPid);
@@ -43,10 +45,11 @@ export class ProcessTreeAnalyzer {
   }
 
   /**
-   * Get process tree on Unix-like systems (macOS, Linux)
+   * Get process tree on Unix-like systems (macOS, Linux, WSL2)
    */
   private async getUnixProcessTree(rootPid: number): Promise<ProcessInfo[]> {
-    const isMacOS = process.platform === 'darwin';
+    const platformType = ProcessUtils.getPlatformType();
+    const isMacOS = platformType === 'darwin';
 
     // Always use the recursive approach since process groups aren't working reliably
     logger.log(

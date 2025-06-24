@@ -9,10 +9,73 @@ import { createLogger } from '../utils/logger.js';
 import chalk from 'chalk';
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 
 const logger = createLogger('process-utils');
 
 export class ProcessUtils {
+  private static _isWSL2: boolean | null = null;
+
+  /**
+   * Detect if running in WSL2 environment
+   * WSL2 is detected by checking /proc/version for "microsoft" and "WSL2"
+   */
+  static isWSL2(): boolean {
+    if (ProcessUtils._isWSL2 !== null) {
+      return ProcessUtils._isWSL2;
+    }
+
+    try {
+      // Only check on Linux platforms
+      if (process.platform !== 'linux') {
+        ProcessUtils._isWSL2 = false;
+        return false;
+      }
+
+      // Check /proc/version for WSL2 signatures
+      if (fs.existsSync('/proc/version')) {
+        const versionContent = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
+        const isWSL = versionContent.includes('microsoft') || versionContent.includes('wsl');
+        const isWSL2 = versionContent.includes('wsl2');
+
+        ProcessUtils._isWSL2 = isWSL && isWSL2;
+
+        if (ProcessUtils._isWSL2) {
+          logger.log(chalk.green('WSL2 environment detected'));
+        }
+
+        return ProcessUtils._isWSL2;
+      }
+
+      // Check for WSL environment variables as fallback
+      const wslEnvVars = ['WSL_DISTRO_NAME', 'WSL_INTEROP', 'WSLENV'];
+      const hasWSLEnv = wslEnvVars.some((envVar) => process.env[envVar]);
+
+      if (hasWSLEnv) {
+        logger.log(chalk.yellow('WSL environment detected via environment variables'));
+        ProcessUtils._isWSL2 = true;
+        return true;
+      }
+
+      ProcessUtils._isWSL2 = false;
+      return false;
+    } catch (error) {
+      logger.warn('Failed to detect WSL2 environment:', error);
+      ProcessUtils._isWSL2 = false;
+      return false;
+    }
+  }
+
+  /**
+   * Get the platform type including WSL2 detection
+   * Returns: 'win32' | 'darwin' | 'linux' | 'wsl2'
+   */
+  static getPlatformType(): 'win32' | 'darwin' | 'linux' | 'wsl2' {
+    if (ProcessUtils.isWSL2()) {
+      return 'wsl2';
+    }
+    return process.platform as 'win32' | 'darwin' | 'linux';
+  }
   /**
    * Check if a process is currently running by PID
    * Uses platform-appropriate methods for reliable detection
@@ -23,11 +86,12 @@ export class ProcessUtils {
     }
 
     try {
-      if (process.platform === 'win32') {
+      const platformType = ProcessUtils.getPlatformType();
+      if (platformType === 'win32') {
         // Windows: Use tasklist command
         return ProcessUtils.isProcessRunningWindows(pid);
       } else {
-        // Unix/Linux/macOS: Use kill with signal 0
+        // Unix/Linux/macOS/WSL2: Use kill with signal 0
         return ProcessUtils.isProcessRunningUnix(pid);
       }
     } catch (error) {
@@ -229,7 +293,9 @@ export class ProcessUtils {
 
     // Use interactive shell to execute the command
     // This ensures aliases and shell functions are available
-    if (process.platform === 'win32') {
+    const platformType = ProcessUtils.getPlatformType();
+
+    if (platformType === 'win32') {
       // Windows shells have different syntax
       if (userShell.includes('bash')) {
         // Git Bash on Windows: Use Unix-style syntax
@@ -265,8 +331,8 @@ export class ProcessUtils {
           useShell: true,
         };
       }
-    } else {
-      // Unix shells: Choose execution mode based on command type
+    } else if (platformType === 'wsl2' || platformType === 'linux' || platformType === 'darwin') {
+      // Unix-like shells (including WSL2): Choose execution mode based on command type
       if (isCommand) {
         // Non-interactive command execution: shell will exit after completion
         return {
@@ -282,6 +348,13 @@ export class ProcessUtils {
           useShell: true,
         };
       }
+    } else {
+      // Unknown platform: fallback to basic command execution
+      return {
+        command: cmdName,
+        args: cmdArgs,
+        useShell: false,
+      };
     }
   }
 
@@ -290,13 +363,15 @@ export class ProcessUtils {
    * Falls back to sensible defaults if SHELL env var is not set
    */
   static getUserShell(): string {
-    // First try SHELL environment variable (most reliable on Unix)
+    // First try SHELL environment variable (most reliable on Unix-like systems)
     if (process.env.SHELL) {
       return process.env.SHELL;
     }
 
     // Platform-specific defaults
-    if (process.platform === 'win32') {
+    const platformType = ProcessUtils.getPlatformType();
+
+    if (platformType === 'win32') {
       // Check for modern shells first
 
       // 1. Check for PowerShell Core (pwsh) - cross-platform version
@@ -357,8 +432,8 @@ export class ProcessUtils {
 
       // 4. Fall back to cmd.exe
       return process.env.ComSpec || 'cmd.exe';
-    } else {
-      // Unix-like systems
+    } else if (platformType === 'wsl2' || platformType === 'linux' || platformType === 'darwin') {
+      // Unix-like systems (including WSL2)
       // Node.js os.userInfo() includes shell on some platforms
       try {
         const userInfo = os.userInfo();
@@ -370,7 +445,12 @@ export class ProcessUtils {
       }
 
       // Check common shell paths in order of preference
-      const commonShells = ['/bin/zsh', '/bin/bash', '/usr/bin/zsh', '/usr/bin/bash', '/bin/sh'];
+      // WSL2 typically has bash as the default shell
+      const commonShells =
+        platformType === 'wsl2'
+          ? ['/bin/bash', '/bin/zsh', '/usr/bin/bash', '/usr/bin/zsh', '/bin/sh']
+          : ['/bin/zsh', '/bin/bash', '/usr/bin/zsh', '/usr/bin/bash', '/bin/sh'];
+
       for (const shell of commonShells) {
         try {
           // Just check if the shell exists and is executable
@@ -387,6 +467,9 @@ export class ProcessUtils {
       }
 
       // Final fallback - /bin/sh should always exist on Unix
+      return '/bin/sh';
+    } else {
+      // Unknown platform fallback
       return '/bin/sh';
     }
   }
