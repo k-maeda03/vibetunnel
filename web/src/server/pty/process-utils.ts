@@ -18,7 +18,13 @@ export class ProcessUtils {
 
   /**
    * Detect if running in WSL2 environment
-   * WSL2 is detected by checking /proc/version for "microsoft" and "WSL2"
+   *
+   * Detection strategy:
+   * 1. Primary: Check /proc/version for "microsoft" AND "WSL2" (most reliable)
+   * 2. Fallback: WSL environment variables indicate WSL1 (not supported)
+   *
+   * Note: WSL1 and WSL2 share the same environment variables but have different
+   * kernel signatures. Only WSL2 is supported due to its Linux-compatible networking.
    */
   static isWSL2(): boolean {
     if (ProcessUtils._isWSL2 !== null) {
@@ -38,23 +44,33 @@ export class ProcessUtils {
         const isWSL = versionContent.includes('microsoft') || versionContent.includes('wsl');
         const isWSL2 = versionContent.includes('wsl2');
 
-        ProcessUtils._isWSL2 = isWSL && isWSL2;
-
-        if (ProcessUtils._isWSL2) {
+        if (isWSL && isWSL2) {
+          ProcessUtils._isWSL2 = true;
           logger.log(chalk.green('WSL2 environment detected'));
+          return true;
+        } else if (isWSL && !isWSL2) {
+          // This is WSL1
+          ProcessUtils._isWSL2 = false;
+          logger.warn(chalk.red('WSL1 detected - WSL1 is not supported. Please upgrade to WSL2.'));
+          logger.warn(chalk.yellow('Run "wsl --set-version <distro> 2" to upgrade to WSL2'));
+          return false;
         }
 
-        return ProcessUtils._isWSL2;
+        // Not WSL, continue to environment variable check
       }
 
-      // Check for WSL environment variables as fallback
+      // Check for WSL environment variables as fallback, but be more careful
       const wslEnvVars = ['WSL_DISTRO_NAME', 'WSL_INTEROP', 'WSLENV'];
       const hasWSLEnv = wslEnvVars.some((envVar) => process.env[envVar]);
 
       if (hasWSLEnv) {
+        // WSL environment detected, but we need to determine if it's WSL1 or WSL2
+        // WSL2 should have been detected via /proc/version above
+        // If we reach here with WSL env vars but no WSL2 in /proc/version, it's likely WSL1
         logger.log(chalk.yellow('WSL environment detected via environment variables'));
-        ProcessUtils._isWSL2 = true;
-        return true;
+        logger.warn(chalk.red('Unable to confirm WSL2 - this may be WSL1 which is not supported'));
+        ProcessUtils._isWSL2 = false;
+        return false;
       }
 
       ProcessUtils._isWSL2 = false;
