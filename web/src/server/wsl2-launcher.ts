@@ -293,7 +293,7 @@ ${chalk.yellow('WSL2 Access:')}
     }
 
     // Build server command
-    const serverPath = path.resolve(__dirname, '..', 'cli.js');
+    const serverPath = path.resolve(__dirname, 'cli.js');
     const args: string[] = [];
 
     if (config.port) args.push('--port', config.port.toString());
